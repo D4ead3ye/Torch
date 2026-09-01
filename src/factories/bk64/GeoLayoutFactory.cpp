@@ -90,8 +90,16 @@ ExportResult BK64::GeoLayoutBinaryExporter::Export(std::ostream& write, std::sha
     // Zero-fill, then drop each command back at the offset it came from.
     // Read once: extraction writes thousands of fields.
     static const bool kGeoLittleEndian = [] {
-        const char* v = std::getenv("TORCH_GEO_LITTLE_ENDIAN");
-        return v != nullptr && v[0] == '1';
+        // The tree has to arrive in the byte order of the machine that reads it.
+        // Default to this machine's order, because the common case is Torch
+        // compiled into the game extracting for the process it is running in.
+        // Cross-extracting for another target - the Wii U pipeline, which packs
+        // on a little-endian host for a big-endian console - says so explicitly.
+        if (const char* v = std::getenv("TORCH_GEO_LITTLE_ENDIAN")) {
+            return v[0] == '1';
+        }
+        const uint32_t probe = 1;
+        return *reinterpret_cast<const uint8_t*>(&probe) == 1;
     }();
 
     std::vector<uint8_t> buffer(totalSize, 0);
