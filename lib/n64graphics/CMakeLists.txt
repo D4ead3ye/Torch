@@ -30,3 +30,7 @@ if(BUILD_UI)
         stbi_write_force_png_filter=n64g_stbi_write_force_png_filter
     )
 endif()
+if (CMAKE_SYSTEM_NAME STREQUAL "CafeOS")
+    # RPX has no TLS segment
+    target_compile_definitions(N64Graphics PUBLIC STBI_NO_THREAD_LOCALS)
+endif()

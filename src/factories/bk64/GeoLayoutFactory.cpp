@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include "GeoLayoutFactory.h"
 
 #include "Companion.h"
@@ -87,6 +88,12 @@ ExportResult BK64::GeoLayoutBinaryExporter::Export(std::ostream& write, std::sha
     }
 
     // Zero-fill, then drop each command back at the offset it came from.
+    // Read once: extraction writes thousands of fields.
+    static const bool kGeoLittleEndian = [] {
+        const char* v = std::getenv("TORCH_GEO_LITTLE_ENDIAN");
+        return v != nullptr && v[0] == '1';
+    }();
+
     std::vector<uint8_t> buffer(totalSize, 0);
 
     for (const auto& cmd : geo->mCmds) {
@@ -95,25 +102,55 @@ ExportResult BK64::GeoLayoutBinaryExporter::Export(std::ostream& write, std::sha
 
         // Little helpers: write at pos, bump pos
         auto writeU8 = [&](uint8_t v) { buffer[pos++] = v; };
+        // [port] Write big-endian, matching the N64 original. These used to be
+        // plain memcpy, which meant the tree came out in the byte order of the
+        // machine that ran the extraction. The game reads these fields
+        // natively, so on a big-endian console every opcode arrived shifted
+        // (LOADDL as 0x03000000 instead of 3), failed the bounds check in
+        // modelRender_executeGeoCmds and was silently skipped - no model ever
+        // drew a mesh. Fixing it here rather than in the runtime importer:
+        // Torch knows every field's width and position exactly, while the
+        // importer would have to re-derive a tree whose commands are neither
+        // contiguous nor all fixed-length.
+//
+        // [port] Which order is now a choice. The tree has to arrive in the byte
+        // order of the machine that will *read* it, and extraction runs on the
+        // host for both targets - so a compile-time test would describe the
+        // wrong machine. Set TORCH_GEO_LITTLE_ENDIAN=1 when extracting for a
+        // little-endian target; the default stays big-endian so existing Wii U
+        // archives remain valid.
+        //
+        // Doing it here rather than swapping at load is deliberate: the commands
+        // are neither contiguous nor all fixed-length, and a previous attempt to
+        // walk the buffer desynchronised on 345 of 810 models.
         auto writeU16 = [&](uint16_t v) {
-            memcpy(&buffer[pos], &v, 2);
-            pos += 2;
+            if (kGeoLittleEndian) {
+                buffer[pos++] = static_cast<uint8_t>(v);
+                buffer[pos++] = static_cast<uint8_t>(v >> 8);
+                return;
+            }
+            buffer[pos++] = static_cast<uint8_t>(v >> 8);
+            buffer[pos++] = static_cast<uint8_t>(v);
         };
-        auto writeS16 = [&](int16_t v) {
-            memcpy(&buffer[pos], &v, 2);
-            pos += 2;
-        };
+        auto writeS16 = [&](int16_t v) { writeU16(static_cast<uint16_t>(v)); };
         auto writeU32 = [&](uint32_t v) {
-            memcpy(&buffer[pos], &v, 4);
-            pos += 4;
+            if (kGeoLittleEndian) {
+                buffer[pos++] = static_cast<uint8_t>(v);
+                buffer[pos++] = static_cast<uint8_t>(v >> 8);
+                buffer[pos++] = static_cast<uint8_t>(v >> 16);
+                buffer[pos++] = static_cast<uint8_t>(v >> 24);
+                return;
+            }
+            buffer[pos++] = static_cast<uint8_t>(v >> 24);
+            buffer[pos++] = static_cast<uint8_t>(v >> 16);
+            buffer[pos++] = static_cast<uint8_t>(v >> 8);
+            buffer[pos++] = static_cast<uint8_t>(v);
         };
-        auto writeS32 = [&](int32_t v) {
-            memcpy(&buffer[pos], &v, 4);
-            pos += 4;
-        };
+        auto writeS32 = [&](int32_t v) { writeU32(static_cast<uint32_t>(v)); };
         auto writeF32 = [&](float v) {
-            memcpy(&buffer[pos], &v, 4);
-            pos += 4;
+            uint32_t bits;
+            memcpy(&bits, &v, 4);
+            writeU32(bits);
         };
 
         // Header is opcode then cmdLength

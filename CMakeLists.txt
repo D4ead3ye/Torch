@@ -344,6 +344,13 @@ FetchContent_Declare(
 set(YAML_CPP_BUILD_TESTS OFF)
 FetchContent_MakeAvailable(yaml-cpp)
 
+if (CMAKE_SYSTEM_NAME STREQUAL "CafeOS")
+    # yaml-cpp forces POSITION_INDEPENDENT_CODE, which makes GCC emit
+    # R_PPC_PLTREL24 / R_PPC_LOCAL24PC relocations that elf2rpl cannot
+    # represent in an RPX.
+    set_target_properties(yaml-cpp PROPERTIES POSITION_INDEPENDENT_CODE OFF)
+endif()
+
 target_link_libraries(${PROJECT_NAME} PRIVATE yaml-cpp)
 if(NOT USE_STANDALONE)
 	target_compile_definitions(yaml-cpp PRIVATE YAML_CPP_STATIC_DEFINE)
@@ -367,7 +374,7 @@ if(USE_STANDALONE)
 	endif()
 	target_link_libraries(${PROJECT_NAME} PRIVATE spdlog::spdlog)
 
-	if (MSVC)
+	if (WIN32)
 		FetchContent_Declare(
 			zlib
 			GIT_REPOSITORY "https://github.com/madler/zlib.git"
